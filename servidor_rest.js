@@ -1,6 +1,16 @@
 // Eva Soto Peral
 var express = require("express");
 var app = express();
+
+// Importar el cliente de Supabase
+const { createClient } = require('@supabase/supabase-js');
+
+// Configurar con URL y Public Key (anon key)
+const supabaseUrl = 'https://iqsqfeyfjkzrqqvyhmmu.supabase.co';
+const supabaseKey = 'sb_publishable_Ql-sVEQHpYlMbdOidUGMGQ_il127BAM'; // <--- Pega aquí tu public key
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+
 var jwt = require('jwt-simple');
 var clave = 'miSecretoMasOscuro'; // clave para codificar / decodificar el token
 // Entonces la URL donde se servirá la páginas será http://localhost:3000/appCliente/index.html
@@ -29,17 +39,17 @@ app.post("/api/gestores/login", function(req,res){
             res.status(500).json("Error");
         }
         else {
-            if (id.length==1){
+            if (id.rows.length==1){
                 // Crear un token
                 var contenido = { 
-                    usuario: id[0].id,
+                    usuario: id.rows[0].id,
                     expira: Date.now() + 60 * 60 * 1000 // expira dentro de 1 hora (en ms)
                 };
                 var token = jwt.encode(contenido, clave);
                 
                 // Devolvemos el id y el token juntos en un objeto
-                res.status(200).json({ id: id[0].id, token: token });
-                console.log("Gestor", id[0].id, "logeado con token");
+                res.status(200).json({ id: id.rows[0].id, token: token });
+                console.log("Gestor", id.rows[0].id, "logeado con token");
             }
             else{
                 res.status(403).json("Credenciales inválidas");
@@ -54,19 +64,19 @@ app.post("/api/gestores/login", function(req,res){
 app.post("/api/gestores", function(req,res){
     console.log(req.body);
 
-    var sql = "INSERT INTO gestores (nombre, apellidos, usuario, password) VALUES('" + req.body.nombre + "','" + req.body.apellidos + "','" + req.body.usuario + "','" + req.body.password + "')"
+    var sql = "INSERT INTO gestores (nombre, apellidos, usuario, password) VALUES('" + req.body.nombre + "','" + req.body.apellidos + "','" + req.body.usuario + "','" + req.body.password + "') RETURNING id"
 
     conexion.query(sql, function (err, gestor) {
         if (err) { // Hay un gestor con el mismo usuario
 
-            if (err.code == "ER_DUP_ENTRY"){
+            if (err.code == "23505"){
                 return res.status(409).json("Error: El usuario ya existe");
             }
             console.log("Error: usuario no válido", err);
             res.status(500).json("Error");
         }
         else {
-            console.log("Gestor creado con id:", gestor.insertId)
+            console.log("Gestor creado con id:", gestor.rows[0].id)
             res.status(201).json("Usuario creado correctamente");            
         }
     })   
@@ -116,32 +126,44 @@ app.put("/api/gestores/:id", function(req, res){
     // Base sin el password de momento
     var sql = "UPDATE gestores SET nombre = '" + req.body.nombre + "', apellidos = '" + req.body.apellidos + "', usuario = '" + req.body.usuario + "'";
 
+    // Condición para detectar si algún campo cambia realmente (PostgreSQL no tiene changedRows)
+    var cambios = "nombre IS DISTINCT FROM '" + req.body.nombre + "' OR apellidos IS DISTINCT FROM '" + req.body.apellidos + "' OR usuario IS DISTINCT FROM '" + req.body.usuario + "'";
+
     // Si la contraseña NO está vacía, la añadimos a la consulta
     if (req.body.password && req.body.password !== "") {
         sql += ", password = '" + req.body.password + "'";
+        cambios += " OR password IS DISTINCT FROM '" + req.body.password + "'";
     }
 
     // Condición WHERE al final
-    sql += " WHERE id = '" + idGestor +"'";
+    sql += " WHERE id = '" + idGestor +"' AND (" + cambios + ")";
 
     conexion.query(sql, function (err, result) {
         if (err) {
             // Usuario que ya existe
-            if (err.code === "ER_DUP_ENTRY"){
+            if (err.code === "23505"){
                 return res.status(409).json("Error: El usuario ya existe");
             }
             console.log("Error al actualizar:", err);
             return res.status(500).json("Error interno del servidor");
         }
 
-        // result.affectedRows --> cuántas filas coincidieron con el WHERE
-        if (result.affectedRows == 0) {
-            return res.status(404).json("Error, el gestor con id " + idGestor + " no existe");
-        }
+        // result.rowCount --> cuántas filas se han modificado
+        if (result.rowCount == 0) {
+            // Distinguimos entre "no existe" y "no ha cambiado ningún campo"
+            conexion.query("SELECT id FROM gestores WHERE id = '" + idGestor + "'", function (err, existe) {
+                if (err) {
+                    console.log("Error al actualizar:", err);
+                    return res.status(500).json("Error interno del servidor");
+                }
 
-        // result.changedRows --> cuántas filas cambiaron
-        if (result.changedRows == 0) {
-            return res.status(400).json("Error. Debes editar algún campo");
+                if (existe.rows.length == 0) {
+                    return res.status(404).json("Error, el gestor con id " + idGestor + " no existe");
+                }
+
+                return res.status(400).json("Error. Debes editar algún campo");
+            });
+            return;
         }
 
         res.status(200).json("Datos modificados correctamente");
@@ -161,10 +183,10 @@ app.get("/api/gestores/:id", function(req, res){
         }
 
         // ID no existe
-        if (resultados.length === 0) {
+        if (resultados.rows.length === 0) {
             return res.status(404).json("Error, el gestor con id " + idGestor + " no existe");
         }
-        res.status(200).json(resultados[0]);
+        res.status(200).json(resultados.rows[0]);
     });
 });
 
@@ -178,7 +200,7 @@ app.get("/api/categorias", function(req, res){
             console.log("Error al obtener categorías:", err);
             return res.status(500).json("Error interno del servidor");
         }
-        res.json(resultados);
+        res.json(resultados.rows);
     });
 });
 
@@ -191,7 +213,7 @@ app.get("/api/modelos", function(req,res){
             console.log("Error al obtener modelos:", err);
             return res.status(500).json("Error interno del servidor");
         }
-        res.json(resultados);
+        res.json(resultados.rows);
     });
 })
 
@@ -204,7 +226,7 @@ app.get("/api/ubicaciones", function(req,res){
             console.log("Error al obtener ubicaciones:", err);
             return res.status(500).json("Error interno del servidor");
         }
-        res.json(resultados);
+        res.json(resultados.rows);
     });
 })
 
@@ -243,7 +265,7 @@ app.get("/api/recursos", function(req, res){
             res.status(500).json("Error al realizar la consulta");
             return;
         }
-        res.json(recursos);
+        res.json(recursos.rows);
     });
 })
 
@@ -261,7 +283,7 @@ app.delete("/api/recursos/:id", function(req, res){
         }
 
         // Comprobamos si  se eliminó algún registro
-        if (result.affectedRows === 0) {
+        if (result.rowCount === 0) {
             return res.status(404).json("Error, el recurso con id " + idRecurso + " no existe");
         }
 
@@ -281,13 +303,13 @@ app.get("/api/recursos/:id", function(req, res){
             res.status(500).json("Error del servidor");
         }
         else {
-            if (recurso.length==0){
+            if (recurso.rows.length==0){
                 return res.status(403).json("Error, el recurso no existe");
                 
             }
             else{
-                res.status(200).json(recurso[0]);
-                console.log("Recurso",recurso[0])
+                res.status(200).json(recurso.rows[0]);
+                console.log("Recurso",recurso.rows[0])
             }
         }
     })
@@ -302,12 +324,12 @@ app.post("/api/recursos", function(req, res){
     conexion.query(sql, function(err, result) {
         if (err) {
             // Validación del número de serie
-            if (err.code === "ER_DUP_ENTRY") {
+            if (err.code === "23505") {
                 return res.status(409).json("Error: Ya existe un recurso con ese número de serie");
             }
             
             // Validación del modelo
-            if (err.code === "ER_NO_REFERENCED_ROW_2") {
+            if (err.code === "23503") {
                 return res.status(400).json("Error: El modelo o la ubicación seleccionada no existen");
             }
             
@@ -324,17 +346,20 @@ app.post("/api/recursos", function(req, res){
 app.put("/api/recursos/:id", function(req, res){
     var idRecurso = req.params.id;
 
-    var sql = "UPDATE recursos SET modelo = '" + req.body.modelo + "', ubicacion = '" + req.body.ubicacion + "', numero_serie = '" + req.body.numero_serie + "', estado = '" + req.body.estado + "' WHERE id = '" + req.params.id + "'";
+    // Condición para detectar si algún campo cambia realmente (PostgreSQL no tiene changedRows)
+    var cambios = "modelo IS DISTINCT FROM '" + req.body.modelo + "' OR ubicacion IS DISTINCT FROM '" + req.body.ubicacion + "' OR numero_serie IS DISTINCT FROM '" + req.body.numero_serie + "' OR estado IS DISTINCT FROM '" + req.body.estado + "'";
+
+    var sql = "UPDATE recursos SET modelo = '" + req.body.modelo + "', ubicacion = '" + req.body.ubicacion + "', numero_serie = '" + req.body.numero_serie + "', estado = '" + req.body.estado + "' WHERE id = '" + req.params.id + "' AND (" + cambios + ")";
 
     conexion.query(sql, function(err, result) {
         if (err) {
             // Validación de número de serie duplicado
-            if (err.code === "ER_DUP_ENTRY") {
+            if (err.code === "23505") {
                 return res.status(409).json("Error: Ya existe otro recurso con ese número de serie");
             }
             
             // Validación de si el modelo o ubicación existen
-            if (err.code === "ER_NO_REFERENCED_ROW_2") {
+            if (err.code === "23503") {
                 return res.status(400).json("Error: El modelo o la ubicación seleccionada no existen");
             }
             
@@ -342,14 +367,23 @@ app.put("/api/recursos/:id", function(req, res){
             return res.status(500).json("Error interno del servidor");
         }
 
-        // Sin cambios
-        if (result.affectedRows === 0) {
-            return res.status(404).json("Error, el recurso con id " + idRecurso + " no existe");
-        }
+        // Sin cambios o recurso inexistente
+        if (result.rowCount === 0) {
+            // Distinguimos entre "no existe" y "no ha cambiado ningún campo"
+            conexion.query("SELECT id FROM recursos WHERE id = '" + idRecurso + "'", function(err, existe) {
+                if (err) {
+                    console.log("Error al actualizar el recurso:", err);
+                    return res.status(500).json("Error interno del servidor");
+                }
 
-        // NO se ha modificado algún campo
-        if (result.changedRows === 0) {
-            return res.status(400).json("Error, no has modificado ningún campo");
+                if (existe.rows.length === 0) {
+                    return res.status(404).json("Error, el recurso con id " + idRecurso + " no existe");
+                }
+
+                // NO se ha modificado algún campo
+                return res.status(400).json("Error, no has modificado ningún campo");
+            });
+            return;
         }
 
         res.status(200).json("Recurso modificado correctamente");
@@ -371,7 +405,7 @@ app.get("/api/recursos/:id/reservas", function(req, res){
         }
 
         // El recurso no existe
-        if (resultadosRecurso.length === 0) {
+        if (resultadosRecurso.rows.length === 0) {
             return res.status(404).json("Error, recurso con id " + idRecurso + " no existe");
         }
 
@@ -385,7 +419,7 @@ app.get("/api/recursos/:id/reservas", function(req, res){
             }
 
             // Devolvemos la lista de reservas (si no tiene ninguna, devolverá un [])
-            res.status(200).json(resultadosReservas);
+            res.status(200).json(resultadosReservas.rows);
         });
     });
 });
@@ -404,7 +438,7 @@ app.get("/api/recursos/:id/resenyas", function(req, res){
         }
 
         // El recurso no existe
-        if (resultadosRecurso.length === 0) {
+        if (resultadosRecurso.rows.length === 0) {
             return res.status(404).json("Error, recurso con id " + idRecurso + " no existe");
         }
 
@@ -418,7 +452,7 @@ app.get("/api/recursos/:id/resenyas", function(req, res){
             }
 
             // Devolvemos la lista de reservas (si no tiene ninguna, devolverá un [])
-            res.status(200).json(resultadosResenyas);
+            res.status(200).json(resultadosResenyas.rows);
         });
     });
 });
@@ -438,11 +472,11 @@ app.get("/api/sanitarios/:id", function(req, res){
         }
 
         // 3. Si el sanitario no existe
-        if (resultados.length === 0) {
+        if (resultados.rows.length === 0) {
             return res.status(404).json("Error, sanitario con id " + idSanitario + " no existe");
         }
 
-        res.status(200).json(resultados[0]);
+        res.status(200).json(resultados.rows[0]);
     });
 });
 
