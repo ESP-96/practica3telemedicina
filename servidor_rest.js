@@ -18,7 +18,7 @@ app.use("/appCliente", express.static("cliente_rest")); // express.statitic(Nomb
 app.use(express.json());
 
 // Obtiene los datos --> variables globales
-var conexion = require("./conexion_mysql.js")
+// var conexion = require("./conexion_mysql.js")
 
 // ID ÁREA GESTOR
 var idArea = 15;
