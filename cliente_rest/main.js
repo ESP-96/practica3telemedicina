@@ -32,6 +32,8 @@ function acceder(){
         // Inicializado fuera
         id = respuesta.id;
         tokenGestor = respuesta.token;
+        cargarCategorias(false);
+        cargarUbicaciones(false);
         actualizar();
         cambiarSeccion("principal");
         cargarRanking(); //! Carga el ranking de reservas por área médica al entrar
@@ -667,8 +669,6 @@ window.onload = function() {
     crearSelects();
     limpiarTabla();
     limpiarFormulario(); // Para que no se muestren los datos si entra otro usuario (refrescando la página)
-    cargarCategorias(false);
-    cargarUbicaciones(false);
     cerrarWS(); // **
 };
 
